@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Lake Boat Fishing Simulator</title>
+    <style>
+      body {
+        margin: 0;
+        background: #0a1f3a;
+        color: #fff;
+        font-family: Arial;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        flex-direction: column;
+      }
+      canvas {
+        border: 5px solid #4a8;
+        box-shadow: 0 0 20px #000;
+      }
+      #ui {
+        position: absolute;
+        top: 25px;
+        left: 40px;
+        font-size: 26px;
+        font-weight: bold;
+        text-shadow: 2px 2px 4px #000;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="ui">Score: 0</div>
+    <canvas id="c" width="800" height="600"></canvas>
+
+    <script>
+      const canvas = document.getElementById("c");
+      const ctx = canvas.getContext("2d");
+      const scoreEl = document.getElementById("ui");
+
+      let score = parseInt(localStorage.getItem("fishingScore") || "0");
+      scoreEl.textContent = `Score: ${score}`;
+
+      let boatX = 380;
+      let lineLength = 0;
+      const MAX_LINE = 430;
+      let fish = [];
+      let messages = [];
+      const keys = {};
+
+      const fishTypes = [
+        { name: "Trout", size: 24, value: 30, color: "#b0c4de", speed: 2.8 },
+        { name: "Bass", size: 35, value: 65, color: "#2e8b57", speed: 1.9 },
+        { name: "Pike", size: 48, value: 130, color: "#8b4513", speed: 1.4 },
+      ];
+
+      function spawnFish() {
+        if (fish.length > 7) return;
+        const type = fishTypes[Math.floor(Math.random() * fishTypes.length)];
+        fish.push({
+          ...type,
+          x: 50 + Math.random() * 700,
+          y: 170 + Math.random() * 380,
+          vx: (Math.random() > 0.5 ? 1 : -1) * type.speed,
+        });
+      }
+
+      function update() {
+        if (keys["ArrowLeft"]) boatX -= 5.5;
+        if (keys["ArrowRight"]) boatX += 5.5;
+        boatX = Math.max(60, Math.min(740, boatX));
+
+        if (keys["ArrowDown"]) lineLength = Math.min(MAX_LINE, lineLength + 6);
+        if (keys["ArrowUp"]) lineLength = Math.max(10, lineLength - 6);
+
+        fish.forEach((f) => {
+          f.x += f.vx;
+          if (f.x < 40 || f.x > 760) f.vx *= -1.05;
+        });
+
+        if (Math.random() < 0.03) spawnFish();
+      }
+
+      document.addEventListener("keydown", (e) => {
+        keys[e.key] = true;
+        const k = e.key.toLowerCase();
+
+        if (k === "z") lineLength = Math.min(MAX_LINE, lineLength + 95);
+        if (k === "x") lineLength = Math.max(10, lineLength - 130);
+
+        if (k === "c") {
+          const hx = boatX;
+          const hy = 125 + lineLength;
+          for (let i = fish.length - 1; i >= 0; i--) {
+            const f = fish[i];
+            if (Math.hypot(f.x - hx, f.y - hy) < f.size + 12) {
+              score += f.value;
+              localStorage.setItem("fishingScore", score);
+              scoreEl.textContent = `Score: ${score}`;
+              messages.push({
+                text: `Caught ${f.name}! +${f.value}`,
+                life: 80,
+                x: f.x,
+                y: f.y - 40,
+              });
+              fish.splice(i, 1);
+              return;
+            }
+          }
+        }
+      });
+
+      document.addEventListener("keyup", (e) => (keys[e.key] = false));
+
+      function drawWater() {
+        ctx.fillStyle = "#1e88e5";
+        ctx.fillRect(0, 130, 800, 470);
+        ctx.strokeStyle = "rgba(255,255,255,0.25)";
+        for (let i = 0; i < 7; i++) {
+          const y = 165 + i * 52;
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.quadraticCurveTo(250, y + 12, 520, y - 6);
+          ctx.quadraticCurveTo(680, y + 9, 800, y);
+          ctx.stroke();
+        }
+      }
+
+      function drawBoat() {
+        ctx.fillStyle = "#5d3310";
+        ctx.beginPath();
+        ctx.ellipse(boatX, 118, 52, 18, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#ddd";
+        ctx.fillRect(boatX - 28, 95, 56, 22);
+      }
+
+      function drawLine() {
+        ctx.strokeStyle = "#222";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(boatX, 125);
+        ctx.lineTo(boatX, 125 + lineLength);
+        ctx.stroke();
+
+        ctx.fillStyle = "#444";
+        ctx.fillRect(boatX - 3, 120 + lineLength, 6, 14);
+      }
+
+      function drawFish(f) {
+        ctx.save();
+        ctx.translate(f.x, f.y);
+        if (f.vx < 0) ctx.scale(-1, 1);
+
+        ctx.fillStyle = f.color;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, f.size, f.size * 0.52, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.moveTo(-f.size * 0.8, 0);
+        ctx.lineTo(-f.size * 1.35, -f.size * 0.65);
+        ctx.lineTo(-f.size * 1.35, f.size * 0.65);
+        ctx.fill();
+
+        ctx.fillStyle = "#111";
+        ctx.beginPath();
+        ctx.arc(f.size * 0.35, -6, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#fff";
+        ctx.beginPath();
+        ctx.arc(f.size * 0.42, -8, 3, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.restore();
+      }
+
+      function draw() {
+        ctx.fillStyle = "#87cefa";
+        ctx.fillRect(0, 0, 800, 130);
+
+        drawWater();
+        drawBoat();
+        drawLine();
+
+        fish.forEach(drawFish);
+
+        ctx.fillStyle = "#ff0";
+        ctx.font = "bold 22px Arial";
+        messages = messages.filter((m) => {
+          ctx.globalAlpha = m.life / 80;
+          ctx.fillText(m.text, m.x - 55, m.y);
+          m.life--;
+          m.y -= 1.1;
+          return m.life > 0;
+        });
+        ctx.globalAlpha = 1;
+      }
+
+      function loop() {
+        update();
+        draw();
+        requestAnimationFrame(loop);
+      }
+
+      for (let i = 0; i < 6; i++) spawnFish();
+      loop();
+    </script>
+  </body>
+</html>

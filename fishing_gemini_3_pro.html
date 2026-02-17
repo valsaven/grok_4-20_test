@@ -1,0 +1,573 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Simple Lake Boat Fishing</title>
+    <style>
+      body {
+        margin: 0;
+        overflow: hidden;
+        background-color: #202020;
+        font-family: "Courier New", Courier, monospace;
+        user-select: none;
+      }
+      canvas {
+        display: block;
+      }
+      #ui {
+        position: absolute;
+        top: 20px;
+        left: 20px;
+        color: white;
+        background: rgba(0, 0, 0, 0.5);
+        padding: 15px;
+        border-radius: 8px;
+        border: 2px solid #fff;
+      }
+      .controls {
+        margin-top: 10px;
+        font-size: 0.8em;
+        color: #ccc;
+      }
+      h1 {
+        margin: 0 0 10px 0;
+        font-size: 24px;
+      }
+      p {
+        margin: 5px 0;
+      }
+      .alert {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        color: yellow;
+        font-size: 30px;
+        font-weight: bold;
+        text-shadow: 2px 2px 0 #000;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.2s;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="ui">
+      <h1>LAKE SIMULATOR</h1>
+      <p>Score: <span id="scoreVal">0</span></p>
+      <p>High Score: <span id="highScoreVal">0</span></p>
+      <div class="controls">
+        <hr />
+        <b>ARROWS</b>: Drive Boat<br />
+        <b>Z</b>: Cast Line / Cancel<br />
+        <b>X</b>: REEL IN (When biting!)<br />
+        <b>C</b>: Chum Water (Attract)
+      </div>
+    </div>
+
+    <div id="msg" class="alert">FISH ON! PRESS X!</div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+      /**
+       * CONFIGURATION & SETUP
+       */
+      const canvas = document.getElementById("gameCanvas");
+      const ctx = canvas.getContext("2d");
+      const msgEl = document.getElementById("msg");
+      const scoreEl = document.getElementById("scoreVal");
+      const highScoreEl = document.getElementById("highScoreVal");
+
+      // Resize handling
+      let WIDTH, HEIGHT;
+      function resize() {
+        WIDTH = window.innerWidth;
+        HEIGHT = window.innerHeight;
+        canvas.width = WIDTH;
+        canvas.height = HEIGHT;
+      }
+      window.addEventListener("resize", resize);
+      resize();
+
+      // Game State
+      const state = {
+        score: 0,
+        highScore: parseInt(localStorage.getItem("fishingHighScore")) || 0,
+        fishing: false, // Is the line out?
+        biting: false, // Is a fish currently biting?
+        biteTimer: 0,
+        chumCooldown: 0,
+      };
+
+      // Update UI initially
+      scoreEl.innerText = state.score;
+      highScoreEl.innerText = state.highScore;
+
+      /**
+       * INPUT HANDLING
+       */
+      const keys = {};
+      window.addEventListener("keydown", (e) => {
+        keys[e.key] = true;
+        handleAction(e.key.toLowerCase());
+      });
+      window.addEventListener("keyup", (e) => (keys[e.key] = false));
+
+      function handleAction(key) {
+        // Z: Cast or Cancel
+        if (key === "z") {
+          if (!state.fishing) {
+            // Start Fishing
+            state.fishing = true;
+            lure.x = boat.x + Math.cos(boat.angle) * 80;
+            lure.y = boat.y + Math.sin(boat.angle) * 80;
+            lure.active = true;
+            createSplash(lure.x, lure.y);
+          } else {
+            // Cancel Fishing
+            resetFishing();
+          }
+        }
+
+        // X: Reel In (Catch)
+        if (key === "x") {
+          if (state.fishing && state.biting) {
+            catchFish();
+          } else if (state.fishing) {
+            // Reeled in too early
+            resetFishing();
+            showFloatingText("Too early!", boat.x, boat.y - 40, "white");
+          }
+        }
+
+        // C: Chum (Attract Fish)
+        if (key === "c") {
+          if (state.chumCooldown <= 0) {
+            spawnFishBatch(5, boat.x, boat.y);
+            state.chumCooldown = 300; // 5 seconds (60fps * 5)
+            createSplash(boat.x, boat.y, 10, "rgba(100,255,100,0.5)");
+            showFloatingText("Chumming...", boat.x, boat.y - 40, "#88ff88");
+          }
+        }
+      }
+
+      function resetFishing() {
+        state.fishing = false;
+        state.biting = false;
+        lure.active = false;
+        msgEl.style.opacity = 0;
+      }
+
+      function catchFish() {
+        // Find the fish that was biting (closest to lure)
+        let caughtFish = null;
+        let minDist = 999;
+
+        fishes.forEach((f) => {
+          let d = Math.hypot(f.x - lure.x, f.y - lure.y);
+          if (d < minDist) {
+            minDist = d;
+            caughtFish = f;
+          }
+        });
+
+        if (caughtFish) {
+          // Success
+          state.score += caughtFish.value;
+          saveScore();
+          showFloatingText(
+            `+${caughtFish.value}`,
+            boat.x,
+            boat.y - 50,
+            "yellow",
+          );
+
+          // Remove fish
+          fishes = fishes.filter((f) => f !== caughtFish);
+
+          // Visuals
+          createSplash(lure.x, lure.y, 15);
+        }
+
+        resetFishing();
+        updateUI();
+      }
+
+      function saveScore() {
+        if (state.score > state.highScore) {
+          state.highScore = state.score;
+          localStorage.setItem("fishingHighScore", state.highScore);
+        }
+        updateUI();
+      }
+
+      function updateUI() {
+        scoreEl.innerText = state.score;
+        highScoreEl.innerText = state.highScore;
+      }
+
+      /**
+       * GAME OBJECTS
+       */
+      const boat = {
+        x: WIDTH / 2,
+        y: HEIGHT / 2,
+        angle: 0,
+        speed: 0,
+        maxSpeed: 4,
+        friction: 0.95,
+      };
+
+      const lure = { x: 0, y: 0, active: false };
+
+      // Fish Configuration
+      const fishTypes = [
+        {
+          name: "Minnow",
+          size: 6,
+          color: "#aaddff",
+          value: 10,
+          speed: 1.5,
+          rarity: 0.6,
+        },
+        {
+          name: "Bass",
+          size: 10,
+          color: "#88cc88",
+          value: 30,
+          speed: 1.2,
+          rarity: 0.3,
+        },
+        {
+          name: "Pike",
+          size: 14,
+          color: "#ccaa88",
+          value: 60,
+          speed: 1.0,
+          rarity: 0.08,
+        },
+        {
+          name: "Legend",
+          size: 20,
+          color: "#ffd700",
+          value: 200,
+          speed: 2.5,
+          rarity: 0.02,
+        }, // Gold
+      ];
+
+      let fishes = [];
+      let particles = [];
+      let floatingTexts = [];
+
+      class Fish {
+        constructor(x, y, type) {
+          this.x = x || Math.random() * WIDTH;
+          this.y = y || Math.random() * HEIGHT;
+          this.type = type || getRandomFishType();
+          this.angle = Math.random() * Math.PI * 2;
+          this.timer = 0;
+          this.targetAngle = this.angle;
+        }
+
+        update() {
+          // Movement logic
+          this.timer++;
+          if (this.timer > 50) {
+            this.timer = 0;
+            this.targetAngle = Math.random() * Math.PI * 2;
+          }
+
+          // Smooth rotation
+          let diff = this.targetAngle - this.angle;
+          this.angle += diff * 0.05;
+
+          // If lured by bait
+          if (lure.active && !state.biting) {
+            let d = Math.hypot(this.x - lure.x, this.y - lure.y);
+            if (d < 150) {
+              // Swim towards lure
+              this.angle = Math.atan2(lure.y - this.y, lure.x - this.x);
+
+              if (d < 10) {
+                // Bite chance
+                if (Math.random() < 0.02) {
+                  triggerBite();
+                }
+              }
+            }
+          }
+
+          // Avoid boat slightly
+          let dBoat = Math.hypot(this.x - boat.x, this.y - boat.y);
+          if (dBoat < 50) {
+            this.angle = Math.atan2(this.y - boat.y, this.x - boat.x); // Run away
+          }
+
+          this.x += Math.cos(this.angle) * this.type.speed;
+          this.y += Math.sin(this.angle) * this.type.speed;
+
+          // Wrap around screen
+          if (this.x < 0) this.x = WIDTH;
+          if (this.x > WIDTH) this.x = 0;
+          if (this.y < 0) this.y = HEIGHT;
+          if (this.y > HEIGHT) this.y = 0;
+        }
+
+        draw() {
+          ctx.save();
+          ctx.translate(this.x, this.y);
+          ctx.rotate(this.angle);
+
+          // Shadow/Water silhouette look
+          ctx.fillStyle = this.type.color;
+          ctx.globalAlpha = 0.6;
+
+          // Draw fish shape
+          ctx.beginPath();
+          ctx.ellipse(
+            0,
+            0,
+            this.type.size,
+            this.type.size / 2,
+            0,
+            0,
+            Math.PI * 2,
+          );
+          ctx.fill();
+
+          // Tail
+          ctx.beginPath();
+          ctx.moveTo(-this.type.size, 0);
+          ctx.lineTo(-this.type.size - 5, -5);
+          ctx.lineTo(-this.type.size - 5, 5);
+          ctx.fill();
+
+          ctx.restore();
+        }
+      }
+
+      function getRandomFishType() {
+        const r = Math.random();
+        let acc = 0;
+        for (let t of fishTypes) {
+          acc += t.rarity;
+          if (r < acc) return t;
+        }
+        return fishTypes[0];
+      }
+
+      function spawnFishBatch(count, x, y) {
+        for (let i = 0; i < count; i++) {
+          fishes.push(new Fish(x, y));
+        }
+      }
+
+      // Initial Spawn
+      spawnFishBatch(15);
+
+      function triggerBite() {
+        state.biting = true;
+        state.biteTimer = 60; // 1 second to react
+        msgEl.style.opacity = 1;
+        createSplash(lure.x, lure.y);
+      }
+
+      /**
+       * VISUAL FX
+       */
+      function createSplash(x, y, size = 5, color = "white") {
+        for (let i = 0; i < 8; i++) {
+          particles.push({
+            x: x,
+            y: y,
+            vx: (Math.random() - 0.5) * 4,
+            vy: (Math.random() - 0.5) * 4,
+            life: 30,
+            size: Math.random() * size,
+            color: color,
+          });
+        }
+      }
+
+      function showFloatingText(text, x, y, color) {
+        floatingTexts.push({
+          text: text,
+          x: x,
+          y: y,
+          life: 60,
+          color: color,
+        });
+      }
+
+      /**
+       * MAIN LOOP
+       */
+      function update() {
+        // 1. Boat Physics
+        if (!state.fishing) {
+          // Cannot drive while fishing
+          if (keys["ArrowUp"]) boat.speed += 0.2;
+          if (keys["ArrowDown"]) boat.speed -= 0.1;
+          if (keys["ArrowLeft"]) boat.angle -= 0.05;
+          if (keys["ArrowRight"]) boat.angle += 0.05;
+        } else {
+          boat.speed *= 0.9; // Stop faster if fishing
+        }
+
+        boat.speed = Math.max(Math.min(boat.speed, boat.maxSpeed), -2);
+        boat.speed *= boat.friction; // Friction
+
+        boat.x += Math.cos(boat.angle) * boat.speed;
+        boat.y += Math.sin(boat.angle) * boat.speed;
+
+        // Wrap Boat
+        if (boat.x < -20) boat.x = WIDTH + 20;
+        if (boat.x > WIDTH + 20) boat.x = -20;
+        if (boat.y < -20) boat.y = HEIGHT + 20;
+        if (boat.y > HEIGHT + 20) boat.y = -20;
+
+        // 2. Fish Logic
+        if (fishes.length < 10) spawnFishBatch(1); // Auto replenish
+        fishes.forEach((f) => f.update());
+
+        // 3. Game Logic (Biting)
+        if (state.biting) {
+          state.biteTimer--;
+          if (state.biteTimer <= 0) {
+            // Fish got away
+            resetFishing();
+            showFloatingText("Got away...", boat.x, boat.y - 40, "#ffaaaa");
+          }
+        }
+
+        if (state.chumCooldown > 0) state.chumCooldown--;
+
+        // 4. Particles
+        particles.forEach((p) => {
+          p.x += p.vx;
+          p.y += p.vy;
+          p.life--;
+        });
+        particles = particles.filter((p) => p.life > 0);
+
+        floatingTexts.forEach((t) => {
+          t.y -= 1;
+          t.life--;
+        });
+        floatingTexts = floatingTexts.filter((t) => t.life > 0);
+      }
+
+      function draw() {
+        // Water
+        ctx.fillStyle = "#006994";
+        ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+        // Ripples (Static decoration)
+        ctx.strokeStyle = "rgba(255,255,255,0.1)";
+        ctx.lineWidth = 2;
+        for (let i = 0; i < 10; i++) {
+          ctx.beginPath();
+          ctx.arc(
+            (Date.now() / 50 + i * 100) % WIDTH,
+            (Date.now() / 30 + i * 200) % HEIGHT,
+            20 + Math.sin(Date.now() / 500) * 5,
+            0,
+            Math.PI * 2,
+          );
+          ctx.stroke();
+        }
+
+        // Fish
+        fishes.forEach((f) => f.draw());
+
+        // Boat
+        ctx.save();
+        ctx.translate(boat.x, boat.y);
+        ctx.rotate(boat.angle);
+
+        // Hull
+        ctx.fillStyle = "#8B4513";
+        ctx.fillRect(-20, -10, 40, 20);
+        // Front
+        ctx.beginPath();
+        ctx.moveTo(20, -10);
+        ctx.lineTo(35, 0);
+        ctx.lineTo(20, 10);
+        ctx.fill();
+        // Motor
+        ctx.fillStyle = "#333";
+        ctx.fillRect(-24, -5, 4, 10);
+        // Person
+        ctx.fillStyle = "white";
+        ctx.beginPath();
+        ctx.arc(0, 0, 8, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.restore();
+
+        // Fishing Line & Lure
+        if (state.fishing) {
+          ctx.beginPath();
+          ctx.moveTo(boat.x, boat.y);
+
+          // If biting, shake the line
+          let shakeX = state.biting ? (Math.random() - 0.5) * 5 : 0;
+          let shakeY = state.biting ? (Math.random() - 0.5) * 5 : 0;
+
+          ctx.lineTo(lure.x + shakeX, lure.y + shakeY);
+          ctx.strokeStyle = "white";
+          ctx.lineWidth = 1;
+          ctx.stroke();
+
+          // Bobber
+          ctx.fillStyle = state.biting ? "lime" : "red";
+          ctx.beginPath();
+          ctx.arc(lure.x + shakeX, lure.y + shakeY, 5, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Bobber pulse ring if biting
+          if (state.biting) {
+            ctx.strokeStyle = "yellow";
+            ctx.beginPath();
+            ctx.arc(
+              lure.x,
+              lure.y,
+              10 + Math.sin(Date.now() / 50) * 5,
+              0,
+              Math.PI * 2,
+            );
+            ctx.stroke();
+          }
+        }
+
+        // Particles
+        particles.forEach((p) => {
+          ctx.fillStyle = p.color;
+          ctx.globalAlpha = p.life / 30;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        });
+
+        // Floating Text
+        floatingTexts.forEach((t) => {
+          ctx.fillStyle = t.color;
+          ctx.font = "bold 20px Courier New";
+          ctx.fillText(t.text, t.x, t.y);
+        });
+      }
+
+      function loop() {
+        update();
+        draw();
+        requestAnimationFrame(loop);
+      }
+
+      loop();
+    </script>
+  </body>
+</html>
